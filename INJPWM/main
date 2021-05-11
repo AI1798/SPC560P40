@@ -1,0 +1,285 @@
+#include "MPC5602P.h"
+
+/*******************************************************************************
+* Global variables
+*******************************************************************************/
+uint32_t  CurrentIntervalTime,PreIntervalTime=0;
+uint16_t	InjStart,InjEnd,Ign0Start,Ign0End,Ign1Start,Ign1End=300;
+uint16_t	CurrentEdgeTiming,PreEdgeTiming=0;
+uint16_t	InjInterval,Ign0Interval,Ign1Interval=3000;
+uint8_t		EdgeNumber,TimerOverFlow=0;
+uint8_t     InjStartEdgeNumber  =5;
+uint8_t     InjEndEdgeNumber    =10;
+uint8_t     Ign0StartEdgeNumber =8;
+uint8_t     Ign0EndEdgeNumber   =13;
+uint8_t     InjFlag,Ign0Flag,Ign1lag=0;
+/*******************************************************************************
+* Function prototypes
+*******************************************************************************/
+void disableWatchdog(void);
+void SysInit(void);
+void SysClkPMLLinit(void);
+void etimer_init(void);
+void Interrupts_init(void);
+void etimer0_ch3isr(void);
+void etimer0_ch4isr(void);
+void initGPIO(void);
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/****************************************************************/
+/*Decripition:SysInit
+/****************************************************************/
+void SysInit(void) 
+{
+	/* SSCM initialization. Setting up the most restrictive handling of
+     invalid accesses to peripherals.*/
+	SSCM.ERROR.R	= 0x0002;
+	 /* RGM errors clearing.*/
+  	RGM.FES.R         = 0xFFFF;
+  	RGM.DES.R         = 0xFFFF;
+}
+
+/****************************************************************/
+/*Decripition:Clock Inint
+/****************************************************************/
+void SysClkPMLLinit(void)
+{
+	CGM.OCEN.B.EN 								= 0; 	// output clk disenable
+	/*PAGE124*/
+	CGM.OSC_CTL.B.OSCBYP						= 1;	//  EXTAL is used as root clock.
+
+  CGM.FMPLL[0].CR.B.IDF					= 2;	// The value of this field sets the PLL input division factor.
+	CGM.FMPLL[0].CR.B.ODF					=	1;	// The value of this field sets the PLL output division factor.
+	CGM.FMPLL[0].CR.B.NDIV				=	64;	// The value of this field sets the PLL loop division factor.
+	CGM.FMPLL[0].CR.B.EN_PLL_SW		= 1;	// This bit is used to enable progressive clock switching.
+	/*PAGE103*/
+  	CGM.FMPLL[0].MR.R			=0;
+  	
+  		/* Run modes initialization.*/
+  	ME.IS.R           = 8;                        /* Resetting I_ICONF status.*/
+  	ME.MER.R = 0x0000001D;          // Enable DRUN, RUN0, SAFE, RESET modes 
+  	/*PAGE152*/
+  	ME.DRUN.B.DFLAON							= 3;	// 0x11 Data flash is in normal mode
+	ME.DRUN.B.CFLAON							= 3;	// 0x11 Code flash is in normal mode
+	ME.DRUN.B.PLL1ON							= 1;	// 0x1 system PLL is switched on
+	ME.DRUN.B.XOSC0ON							= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.DRUN.B.IRCON								= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.DRUN.B.SYSCLK							= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+  	ME.DRUN.R									= 0x000F0074;
+  	/*PAGE163*/
+  	ME.SAFE.R									= 0x000F0074;
+  	ME.RUN[0].R									= 0x000F0074;
+ 	/*PAGE163*/
+ 	ME.RUNPC[0].R = 0x000000FF; /* enable peripherals run in all modes */
+	/*PAGE166*/
+	ME.LPPC[0].R = 0x00000500;
+	/*PAGE167*/
+	
+	CGM.OCDSSC.B.SELDIV						= 1;	// output selected Output Clock divided by 2
+	CGM.OCDSSC.B.SELCTL						= 2;	// 0x0010 system PLL
+	/*PAGE126*/
+	
+	CFLASH.PFCR0.B.BK0_APC  = 2;
+  	CFLASH.PFCR0.B.BK0_RWSC = 2;
+  	
+	CGM.CMU_0_CSR.B.CME_A					= 0;	// FMPLL_0 clock monitor disenable
+	CGM.CMU_0_CSR.B.RCDIV					= 0;	// RC clock division by 1(no division)
+	/*PAGE112*/
+
+	/*PAGE150*/
+	CGM.OCEN.B.EN 								= 1; 	// output clk enable
+	/*PAGE124*/
+	while (ME.GS.B.S_MTRANS) {} ;			//Wait for mode transition to complete
+
+}
+/***************************************************************/
+/*Decripition:etimer_init
+/****************************************************************/
+void etimer_init(void) 
+{
+
+	ETIMER_0.ENBL.B.ENBL							= 0;	// Disable ETimer1 module
+
+	ETIMER_0.CHANNEL[3].STS.R 						= 0xFFFF;		// Clear pending IRQs 
+	ETIMER_0.CHANNEL[4].STS.R 						= 0xFFFF;		// Clear pending IRQs 
+	ETIMER_0.CHANNEL[5].STS.R 						= 0xFFFF;		// Clear pending IRQs 
+	/*PAGE719*/
+
+	/*CHANNEL[3]捕捉发动机齿盘上升沿,以及喷油驱动*/
+	ETIMER_0.CHANNEL[3].CTRL.B.CNTMODE		= 1;			// counter rising edge
+	ETIMER_0.CHANNEL[3].CTRL.B.PRISRC			= 31;			// IP clock
+	ETIMER_0.CHANNEL[3].CTRL.B.SECSRC			= 3;			// A3 input pin
+	/*PAGE714*/
+	ETIMER_0.CHANNEL[3].COMP1.R				  	= 1000;			// 初始值
+	//ETIMER_0.CHANNEL[3].CMPLD1.R				  = 1000;			// 初始值
+
+	//ETIMER_0.CHANNEL[3].CCCTRL.B.CLC1			= 2;			  // Load COMP1 with CMPLD1 upon successful compare with the value in COMP1
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CPT1MODE	= 2;			  // Capture A3 rising edge
+	ETIMER_0.CHANNEL[3].CCCTRL.B.ARM 			= 1;
+	/*PAGE723*/
+	ETIMER_0.CHANNEL[3].INTDMA.B.TCF1IE			= 1;			// Active interrupts
+	ETIMER_0.CHANNEL[3].INTDMA.B.TOFIE			= 1;			// Active interrupts
+	ETIMER_0.CHANNEL[3].INTDMA.B.ICF1IE			= 1;			// Active interrupts
+	/*PAGE721*/
+	
+	/*CHANNEL[4]点火驱动*/
+	ETIMER_0.CHANNEL[4].CTRL.B.CNTMODE			= 1;			// counter rising edge
+	ETIMER_0.CHANNEL[4].CTRL.B.PRISRC			  = 31;			// IP clock
+	/*PAGE714*/
+	ETIMER_0.CHANNEL[4].COMP1.R				  	= 1000;			// 初始值
+	ETIMER_0.CHANNEL[4].CMPLD1.R				  = 1000;			// 初始值
+	ETIMER_0.CHANNEL[4].CCCTRL.B.CLC1			= 2;			  // Load COMP1 with CMPLD1 upon successful compare with the value in COMP1
+  /*PAGE723*/
+	ETIMER_0.CHANNEL[4].INTDMA.B.TCF1IE			= 1;			// Active interrupts
+	/*PAGE721*/
+	
+	ETIMER_0.ENBL.R						= 0x3F;	   // enable ETimer1 module
+	/*PAGE726*/
+}
+
+/***************************************************************/
+/*Decripition:Interrupts function & INTC priority definition
+/****************************************************************/
+void Interrupts_init(void) 
+{
+   /* Initialize interrupts and exceptions */
+
+   INTC_InstallINTCInterruptHandler(etimer0_ch3isr, 160, 3);  
+   INTC_InstallINTCInterruptHandler(etimer0_ch4isr, 161, 4);  
+
+   /* lower current INTC priority to start INTC interrupts */
+   INTC.CPR.R = 0;
+	 /*PAGE213*/
+}
+
+
+
+void etimer0_ch3isr(void)
+{
+	if(ETIMER_0.CHANNEL[3].STS.B.TOF==1)
+	{
+		ETIMER_0.CHANNEL[3].STS.B.TOF=1;
+		TimerOverFlow++;
+	}
+	
+	if(ETIMER_0.CHANNEL[3].STS.B.ICF1==1)
+	{
+		ETIMER_0.CHANNEL[3].STS.B.ICF1	= 1;
+		
+		PreEdgeTiming			= CurrentEdgeTiming;
+		PreIntervalTime			= CurrentIntervalTime;
+		CurrentEdgeTiming		= ETIMER_0.CHANNEL[3].CNTR.R;
+		CurrentIntervalTime		= CurrentEdgeTiming-PreEdgeTiming+65535*TimerOverFlow;
+		TimerOverFlow			= 0;
+		EdgeNumber++;
+		
+		if(CurrentIntervalTime>1.5*PreIntervalTime)
+		{
+			EdgeNumber=0;
+		}
+
+    if(EdgeNumber==InjStartEdgeNumber)
+    {
+        InjStart						= CurrentEdgeTiming+300;
+				ETIMER_0.CHANNEL[3].COMP1.R		= InjStart;
+				InjFlag							= 1;
+    }
+		
+		if(EdgeNumber==InjEndEdgeNumber)
+		{
+  		  InjEnd							= CurrentEdgeTiming+300;
+  			ETIMER_0.CHANNEL[3].COMP1.R		= InjEnd;
+  			InjFlag							= 0;
+		}
+		
+		if(EdgeNumber==Ign0StartEdgeNumber)
+		{
+		  	Ign0Start						= CurrentEdgeTiming+300;
+				ETIMER_0.CHANNEL[4].COMP1.R		= Ign0Start;
+				Ign0Flag						= 1;
+		}
+		
+		if(EdgeNumber==Ign0EndEdgeNumber)
+		{
+		    Ign0End							= CurrentEdgeTiming+300;
+				ETIMER_0.CHANNEL[4].COMP1.R		= Ign0End;
+				Ign0Flag						= 0;
+		}
+	}
+
+	if(ETIMER_0.CHANNEL[3].STS.B.TCF1==1)
+	{
+    ETIMER_0.CHANNEL[3].STS.B.TCF1=1;
+	  if(InjFlag==1)
+	  {
+	    SIU.GPDO[15].B.PDO				= 1;
+	  }
+	  else if(InjFlag==0)
+	  {
+	    SIU.GPDO[15].B.PDO				= 0;
+	  }
+	}
+}
+
+void etimer0_ch4isr(void)
+{
+	ETIMER_0.CHANNEL[4].STS.B.TCF1=1;
+	if(Ign0Flag==1)
+  {
+    SIU.GPDO[14].B.PDO				= 1;
+  }
+  else if(Ign0Flag==0)
+  {
+    SIU.GPDO[14].B.PDO				= 0;
+  }
+}
+
+
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR [3].B.PA						= 1;	// Set as GPIO
+	SIU.PCR [3].B.IBE						= 1;	// Input buffer of the pad enabled
+	SIU.GPDI[3].B.PDI						= 0; 	// 默认低电平
+	/* A15,喷油pin脚*/
+	SIU.PCR [15].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [15].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[15].B.PDO						= 0; 	// 默认低电平
+	/* A14,0#点火pin脚*/
+	SIU.PCR [14].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [14].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[14].B.PDO						= 0; 	// 默认低电平
+}
+
+/***************************************************************/
+/*Decripition: MAIN
+/****************************************************************/
+int main(void)
+{
+	disableWatchdog();
+	SysInit();
+	SysClkPMLLinit();
+	etimer_init();
+	Interrupts_init();
+	initGPIO();
+	while(1)
+	{
+		
+	}
+}
+
+
+
