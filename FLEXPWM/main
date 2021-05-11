@@ -1,0 +1,139 @@
+#include "MPC5602P.h"
+
+
+
+/*******************************************************************************
+* Function prototypes
+*******************************************************************************/
+void disableWatchdog(void);
+void SysClkPMLLinit(void);
+void Flexpwm_init(void);
+void initGPIO(void);
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/****************************************************************/
+/*Decripition:Clock Inint
+/****************************************************************/
+void SysClkPMLLinit(void)
+{
+	CGM.OCEN.B.EN 								= 0; 	// output clk disenable
+	/*PAGE124*/
+	CGM.OCDSSC.B.SELDIV						= 1;	// output selected Output Clock divided by 2
+	CGM.OCDSSC.B.SELCTL						= 2;	// 0x0010 system PLL
+	/*PAGE126*/
+	CGM.FMPLL[0].CR.B.IDF					= 5;	// The value of this field sets the PLL input division factor.
+	CGM.FMPLL[0].CR.B.ODF					=	1;	// The value of this field sets the PLL output division factor.
+	CGM.FMPLL[0].CR.B.NDIV				=	32;	// The value of this field sets the PLL loop division factor.
+	CGM.FMPLL[0].CR.B.EN_PLL_SW		= 1;	// This bit is used to enable progressive clock switching.
+	/*PAGE103*/
+	ME.DRUN.B.MVRON								= 1;	// 1 Main voltage regulator is switched on
+	ME.DRUN.B.DFLAON							= 3;	// 0x11 Data flash is in normal mode
+	ME.DRUN.B.CFLAON							= 1;	// 0x11 Code flash is in normal mode
+	ME.DRUN.B.PLL1ON							= 1;	// 0x1 system PLL is switched on
+	ME.DRUN.B.XOSC0ON							= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.DRUN.B.IRCON								= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.DRUN.B.SYSCLK							= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+	ME.RUN[0].B.MVRON							= 1;	// 1 Main voltage regulator is switched on
+	ME.RUN[0].B.DFLAON						= 3;	// 0x11 Data flash is in normal mode
+	ME.RUN[0].B.CFLAON						= 1;	// 0x11 Code flash is in normal mode
+	ME.RUN[0].B.PLL1ON						= 1;	// 0x1 system PLL is switched on
+	ME.RUN[0].B.XOSC0ON						= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.RUN[0].B.IRCON						= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.RUN[0].B.SYSCLK						= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+	ME.RUNPC[0].B.RUN0						= 1;
+	ME.RUNPC[0].B.DRUN						= 1;	// enable only in RUN0 and DRUN modes
+	/*PAGE166*/
+	ME.LPPC[0].B.STOP0						= 0;
+	ME.LPPC[0].B.HALT0						= 0;	// disable when in a low power mode
+	/*PAGE167*/
+	ME.PCTL[41].B.RUN_CFG					= 0;	//and use it for FlexPWM_0 enable in RUN0 mode
+	/*PAGE141*/
+	CGM.CMU_0_CSR.B.CME_A					= 0;	// FMPLL_0 clock monitor disenable
+	CGM.CMU_0_CSR.B.RCDIV					= 0;	// RC clock division by 1(no division)
+	/*PAGE112*/
+	CGM.AC3SC.B.SELCTL						= 1;	// AUX Clock selector 3
+	CGM.AC4SC.B.SELCTL						= 1;	// AUX Clock selector 4
+	/*PAGE127*/
+	ME.MCTL.B.KEY							= 0x40005AF0;
+	ME.MCTL.B.KEY							= 0x4000A50F;
+	/*PAGE150*/
+	CGM.OCEN.B.EN 							= 1; 	// output clk enable
+	/*PAGE124*/
+	while(ME.GS.B.S_CURRENTMODE != 0x4 ){};
+	//ME_GS Check RUN0 mode has successfully been entered
+	/*PAGE147*/
+}
+
+/***************************************************************/
+/*Decripition:etimer_init
+/****************************************************************/
+void Flexpwm_init(void) 
+{
+	FlexPWM_0.OUTEN.B.PWMA_EN           = 1;			// PWMA output disabled
+	FlexPWM_0.OUTEN.B.PWMB_EN           = 1;			// PWMB output disabled
+	FlexPWM_0.OUTEN.B.PWMX_EN           = 0;			// PWMX output disabled
+	/*PAGE666*/
+	FlexPWM_0.SUB[0].CTRL1.B.FULL		= 1;			// Full-cycle reloads enabled
+	/*PAGE655*/
+	FlexPWM_0.SUB[0].CTRL2.B.INDEP		= 1;			//  PWMA and PWMB outputs are independent PWMs
+	/*PAGE652*/
+	FlexPWM_0.SUB[0].TCTRL.R			= 0x0010;		// VAL4 reg determine OUT_TRIG0 generation
+	/*PAGE663*/
+	FlexPWM_0.SUB[0].DTCNT0.R			= 0x0013;		// deadtime values
+	FlexPWM_0.SUB[0].DTCNT1.R			= 0x0013;
+	/*PAGE665*/
+	FlexPWM_0.SUB[0].VAL1.R				= 0x1770;		// PWM modulo 
+    FlexPWM_0.SUB[0].VAL2.R				= 0x0000;   	// PWM A0 rising edge
+    FlexPWM_0.SUB[0].VAL3.R				= 0x0bb8;		// PWM A0 falling edge
+    FlexPWM_0.SUB[0].VAL4.R				= 0x1000;		// PWM B0 rising edge
+    FlexPWM_0.SUB[0].VAL5.R				= 0x1100;		// PWM B0 falling edge
+	/*PAGE657*/
+	FlexPWM_0.SUB[0].DISMAP.R			= 0x0000;		// This register not used on SPC560P34/P40
+	/*PAGE664*/
+	FlexPWM_0.MCTRL.B.RUN				= 1;			// Submodule 0 PWM generator enabled
+
+    FlexPWM_0.MCTRL.B.LDOK				= 1;			// Load prescaler, modulus, and PWM values.
+}
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR [40].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [40].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[40].B.PDO						= 0; 	// 默认低电平
+	SIU.PCR [50].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [50].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[50].B.PDO						= 0; 	// 默认低电平
+}
+
+/***************************************************************/
+/*Decripition: MAIN
+/****************************************************************/
+int main(void)
+{
+	disableWatchdog();
+	SysClkPMLLinit();
+	Flexpwm_init();
+	Interrupts_init();
+	initGPIO();
+	while(1)
+	{
+		
+	}
+}
+
+
+
