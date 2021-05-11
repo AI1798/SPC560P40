@@ -1,0 +1,249 @@
+#include "MPC5602P.h"
+#include "IntcInterrupts.h"
+
+
+/*******************************************************************************
+* Function prototypes
+*******************************************************************************/
+void disableWatchdog(void);
+void SysInit(void);
+void SysClkPMLLinit(void);
+void etimer_init(void);
+void Interrupts_init(void);
+void etimerCH3_isr(void);
+void initGPIO(void);
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/****************************************************************/
+/*Decripition:SysInit
+/****************************************************************/
+void SysInit(void) 
+{
+	/* SSCM initialization. Setting up the most restrictive handling of
+     invalid accesses to peripherals.*/
+	SSCM.ERROR.R	= 0x0002;
+	 /* RGM errors clearing.*/
+  	RGM.FES.R         = 0xFFFF;
+  	RGM.DES.R         = 0xFFFF;
+} 
+
+/****************************************************************/
+/*Decripition:Clock Inint
+/****************************************************************/
+void SysClkPMLLinit(void)
+{
+	CGM.OCEN.B.EN 								= 0; 	// output clk disenable
+	/*PAGE124*/
+	CGM.OSC_CTL.B.OSCBYP						= 1;	//  EXTAL is used as root clock.
+
+  	CGM.FMPLL[0].CR.B.IDF					= 2;	// The value of this field sets the PLL input division factor.
+	CGM.FMPLL[0].CR.B.ODF					=	1;	// The value of this field sets the PLL output division factor.
+	CGM.FMPLL[0].CR.B.NDIV				=	32;	// The value of this field sets the PLL loop division factor.
+	CGM.FMPLL[0].CR.B.EN_PLL_SW		= 1;	// This bit is used to enable progressive clock switching.
+	/*PAGE103*/
+  	CGM.FMPLL[0].MR.R			=0;
+  	
+  		/* Run modes initialization.*/
+  	ME.IS.R           = 8;                        /* Resetting I_ICONF status.*/
+  	ME.MER.R = 0x0000001D;          // Enable DRUN, RUN0, SAFE, RESET modes 
+  	/*PAGE152*/
+  	ME.DRUN.B.DFLAON							= 3;	// 0x11 Data flash is in normal mode
+	ME.DRUN.B.CFLAON							= 3;	// 0x11 Code flash is in normal mode
+	ME.DRUN.B.PLL1ON							= 1;	// 0x1 system PLL is switched on
+	ME.DRUN.B.XOSC0ON							= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.DRUN.B.IRCON								= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.DRUN.B.SYSCLK							= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+  	ME.DRUN.R									= 0x000F0074;
+  	/*PAGE163*/
+  	ME.SAFE.R									= 0x000F0074;
+  	ME.RUN[0].R									= 0x000F0074;
+ 	/*PAGE163*/
+ 	ME.RUNPC[0].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[1].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[2].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[3].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[4].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[5].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[6].R = 0x000000FF; /* enable peripherals run in all modes */
+// 	ME.RUNPC[7].R = 0x000000FF; /* enable peripherals run in all modes */
+	/*PAGE166*/
+	ME.LPPC[0].R = 0x00000500;
+//  ME.LPPC[1].R = 0x00000500;
+//  ME.LPPC[2].R = 0x00000500;
+//	ME.LPPC[3].R = 0x00000500;
+//	ME.LPPC[4].R = 0x00000500;
+//	ME.LPPC[5].R = 0x00000500;
+//	ME.LPPC[6].R = 0x00000500;
+//	ME.LPPC[7].R = 0x00000500;
+	/*PAGE167*/
+	
+	CGM.OCDSSC.B.SELDIV						= 1;	// output selected Output Clock divided by 2
+	CGM.OCDSSC.B.SELCTL						= 2;	// 0x0010 system PLL
+	/*PAGE126*/
+	
+	CFLASH.PFCR0.B.BK0_APC  = 2;
+  	CFLASH.PFCR0.B.BK0_RWSC = 2;
+  	
+	CGM.CMU_0_CSR.B.CME_A					= 0;	// FMPLL_0 clock monitor disenable
+	CGM.CMU_0_CSR.B.RCDIV					= 0;	// RC clock division by 1(no division)
+	/*PAGE112*/
+
+//	ME.MCTL.R									= 0x40005AF0;
+//	ME.MCTL.R									= 0x3000A50F;
+	/*PAGE150*/
+	CGM.OCEN.B.EN 								= 1; 	// output clk enable
+	/*PAGE124*/
+	while (ME.GS.B.S_MTRANS) {} ;			//Wait for mode transition to complete
+//	while(ME.GS.B.S_CURRENTMODE != 0x3 ){};
+	//ME_GS Check RUN0 mode has successfully been entered
+	/*PAGE147*/
+}
+
+
+/***************************************************************/
+/*Decripition:etimer_init
+/****************************************************************/
+void etimer_init(void) 
+{
+	ETIMER_0.ENBL.B.ENBL					= 0;	// Disable ETimer1 module
+	/*PAGE726*/
+	
+	ETIMER_0.CHANNEL[3].STS.R 					= 0xFFFF;		// Clear pending IRQs 
+	ETIMER_0.CHANNEL[3].INTDMA.R				= 0;			// All IRQs and DMA requests disabled
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CLC1			= 0;			// Compare Load 1 and Compare Load 2 disabled
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CLC2			= 0;			// Compare Load 1 and Compare Load 2 disabled
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CPT1MODE		= 0;			// Capture 1 and Capture 2 disabled
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CPT2MODE		= 0;			// Capture 1 and Capture 2 disabled
+	ETIMER_0.CHANNEL[3].CNTR.R 					= 0;			// Counter reset to zero
+	ETIMER_0.CHANNEL[3].LOAD.R 					= 0;	        // load value used to initialize the counter
+	
+	ETIMER_0.CHANNEL[3].COMP1.R 				= 0xFFFF;
+	ETIMER_0.CHANNEL[3].CTRL.B.CNTMODE			= 1;			// counter rising edge
+	ETIMER_0.CHANNEL[3].CTRL.B.PRISRC			= 31;			// Counter #3input pin
+	ETIMER_0.CHANNEL[3].CTRL.B.SECSRC			= 3;			// Counter #3input pin
+	/*PAGE714*/
+
+	ETIMER_0.CHANNEL[3].CCCTRL.B.CPT1MODE		= 2;			// Capture 1 rising edge
+	ETIMER_0.CHANNEL[3].CCCTRL.B.ARM 			= 1;
+	/*PAGE723*/
+	ETIMER_0.CHANNEL[3].CTRL3.B.ROC 			= 1;			// Reload the counter on a capture 1 event
+	//ETIMER_0.CHANNEL[3].CAPT1.R					= 400;
+	
+	ETIMER_0.CHANNEL[3].INTDMA.B.ICF1IE			= 1;			// Active interrupts
+	/*PAGE721*/
+
+	
+	
+	
+	
+	
+//	ETIMER_0.CHANNEL[3].CTRL.B.PRISRC			= 0;	// Counter #0 input pin
+//	ETIMER_0.CHANNEL[3].CTRL.B.ONCE				= 0;	// Count repeatedly
+//	ETIMER_0.CHANNEL[3].CTRL.B.LENGTH			= 0;	// Continue counting to roll over.
+//	ETIMER_0.CHANNEL[3].CTRL.B.DIR				= 0;	// Count up
+	/*PAGE714*/
+//	ETIMER_0.CHANNEL[3].CAPT1.R					= 1;    // 捕捉到上升沿时触发中断
+	/*PAGE711*/
+//	ETIMER_0.CHANNEL[3].INTDMA.B.ICF1IE			= 1;    // enable interrupt for CAPT1
+	/*PAGE721*/
+//	ETIMER_0.CHANNEL[3].CCCTRL.B.CMPMODE		= 1;	// COMP1 register is used when the counter is counting up.
+//	ETIMER_0.CHANNEL[3].CCCTRL.B.CPT1MODE		= 2;	// Capture rising edges.
+	/*PAGE723*/
+	ETIMER_0.ENBL.R								= 0x3F;
+	/*PAGE726*/
+}
+
+/***************************************************************/
+/*Decripition:Interrupts function & INTC priority definition
+/****************************************************************/
+void Interrupts_init(void) 
+{
+   /* Initialize interrupts and exceptions */
+   INTC_InstallINTCInterruptHandler(etimerCH3_isr, 160, 3); 
+    
+   /* lower current INTC priority to start INTC interrupts */
+   INTC.CPR.R = 0;
+	 /*PAGE213*/
+}
+
+void etimerCH3_isr(void)
+{
+
+		SIU.GPDO[8].B.PDO  ^= 1;
+		ETIMER_0.CHANNEL[3].STS.B.ICF1				= 1;    // clear interrupt flag
+	
+	/*PAGE719*/
+}
+
+
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR [3].B.PA						= 1;	// Set as GPIO
+	SIU.PCR [3].B.IBE						= 1;	// Input buffer of the pad enabled
+
+	SIU.GPDI[3].B.PDI						= 0; 	// 默认低电平
+	
+	
+	SIU.PCR [6].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [6].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[6].B.PDO						= 0; 	// 默认低电平
+	SIU.PCR [7].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [7].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[7].B.PDO						= 0; 	// 默认低电平
+	SIU.PCR [8].B.PA						= 0;	// Set as GPIO
+	SIU.PCR [8].B.OBE						= 1;	// Set as OutPut 
+	SIU.GPDO[8].B.PDO						= 0; 	// 默认低电平
+}
+
+/***************************************************************/
+/*Decripition: MAIN
+/****************************************************************/
+int main(void)
+{
+	uint16_t i=0;
+	disableWatchdog();
+	SysInit();
+	SysClkPMLLinit();
+	etimer_init();
+	Interrupts_init();
+	initGPIO();
+	while(1)
+	{
+		
+		if(ETIMER_0.CHANNEL[3].CNTR.R>300)
+		{
+			SIU.GPDO[8].B.PDO  = 1;
+			
+		}
+		else
+		{
+			SIU.GPDO[8].B.PDO  = 0;
+			
+		}
+		
+		for(i=0;i<10000;i++)
+		{
+		
+		}
+		SIU.GPDO[7].B.PDO  ^= 1;
+		SIU.GPDO[6].B.PDO  ^= 1;
+		i=0;
+	}
+}
+
+
+
