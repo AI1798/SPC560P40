@@ -1,0 +1,152 @@
+#include "MPC5602P.h"
+
+/*******************************************************************************
+* Global variables
+*******************************************************************************/
+float     Result;
+float     ResultVolt;
+
+
+/*******************************************************************************
+* Function prototypes
+*******************************************************************************/
+void disableWatchdog(void);
+void SysInit(void);
+void SysClkPMLLinit(void);
+void initGPIO(void);
+void initADC(void);
+
+
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/****************************************************************/
+/*Decripition:SysInit
+/****************************************************************/
+void SysInit(void) 
+{
+	/* SSCM initialization. Setting up the most restrictive handling of
+     invalid accesses to peripherals.*/
+	SSCM.ERROR.R	= 0x0002;
+	 /* RGM errors clearing.*/
+  	RGM.FES.R         = 0xFFFF;
+  	RGM.DES.R         = 0xFFFF;
+}
+
+/****************************************************************/
+/*Decripition:Clock Inint
+/****************************************************************/
+void SysClkPMLLinit(void)
+{
+	CGM.OCEN.B.EN 								= 0; 	// output clk disenable
+	/*PAGE124*/
+	CGM.OSC_CTL.B.OSCBYP						= 1;	//  EXTAL is used as root clock.
+
+  CGM.FMPLL[0].CR.B.IDF					= 2;	// The value of this field sets the PLL input division factor.
+	CGM.FMPLL[0].CR.B.ODF					=	1;	// The value of this field sets the PLL output division factor.
+	CGM.FMPLL[0].CR.B.NDIV				=	64;	// The value of this field sets the PLL loop division factor.
+	CGM.FMPLL[0].CR.B.EN_PLL_SW		= 1;	// This bit is used to enable progressive clock switching.
+	/*PAGE103*/
+  	CGM.FMPLL[0].MR.R			=0;
+  	
+  		/* Run modes initialization.*/
+  	ME.IS.R           = 8;                        /* Resetting I_ICONF status.*/
+  	ME.MER.R = 0x0000001D;          // Enable DRUN, RUN0, SAFE, RESET modes 
+  	/*PAGE152*/
+  	ME.DRUN.B.DFLAON							= 3;	// 0x11 Data flash is in normal mode
+	ME.DRUN.B.CFLAON							= 3;	// 0x11 Code flash is in normal mode
+	ME.DRUN.B.PLL1ON							= 1;	// 0x1 system PLL is switched on
+	ME.DRUN.B.XOSC0ON							= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.DRUN.B.IRCON								= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.DRUN.B.SYSCLK							= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+  	ME.DRUN.R									= 0x000F0074;
+  	/*PAGE163*/
+  	ME.SAFE.R									= 0x000F0074;
+  	ME.RUN[0].R									= 0x000F0074;
+ 	/*PAGE163*/
+ 	ME.RUNPC[0].R = 0x000000FF; /* enable peripherals run in all modes */
+	/*PAGE166*/
+	ME.LPPC[0].R = 0x00000500;
+	/*PAGE167*/
+	
+	CGM.OCDSSC.B.SELDIV						= 1;	// output selected Output Clock divided by 2
+	CGM.OCDSSC.B.SELCTL						= 2;	// 0x0010 system PLL
+	/*PAGE126*/
+	
+	CFLASH.PFCR0.B.BK0_APC  = 2;
+  	CFLASH.PFCR0.B.BK0_RWSC = 2;
+  	
+	CGM.CMU_0_CSR.B.CME_A					= 0;	// FMPLL_0 clock monitor disenable
+	CGM.CMU_0_CSR.B.RCDIV					= 0;	// RC clock division by 1(no division)
+	/*PAGE112*/
+
+	/*PAGE150*/
+	CGM.OCEN.B.EN 								= 1; 	// output clk enable
+	/*PAGE124*/
+	while (ME.GS.B.S_MTRANS) {} ;			//Wait for mode transition to complete
+
+}
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR[8].B.PA              = 0; 
+	SIU.PCR[8].B.OBE             = 1;
+	SIU.GPDO[8].B.PDO					   = 0; 	
+	
+	SIU.PCR[34].B.APC              = 1; 
+
+}
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initADC(void)
+{
+  ADC_0.MCR.B.OWREN           = 1;  // Enables converted data to be overwritten by a new conversion
+  ADC_0.MCR.B.MODE            = 1;  // Scan Mode
+  ADC_0.MCR.B.PWDN            = 0;  // ADC is in normal mode
+  /*PAGE588*/
+  ADC_0.ISR.R                 = 0x00FF;
+  ADC_0.NCMR[0].B.CH3         = 1;  // Select AN3 input for conversion
+  /*PAGE599*/
+  ADC_0.CTR[0].R              = 0x00008403;
+  /*PAGE599*/
+  ADC_0.MCR.B.NSTART=1;             // Starts the chain or scan conversion
+}
+
+/***************************************************************/
+/*Decripition: MAIN
+/****************************************************************/
+int main(void)
+{
+  disableWatchdog();
+	SysInit();
+	SysClkPMLLinit();
+	initGPIO();
+	initADC();
+	while(1)
+	{
+		uint16_t  i,j=0;
+		for(i=0;i<50000;i++)
+		{
+      
+		}
+  
+    while (ADC_0.CDR[3].B.VALID != 1) {}; 
+		Result      = ADC_0.CDR[3].B.CDATA;       
+		ResultVolt  = Result*5/1023;
+
+	}
+}
