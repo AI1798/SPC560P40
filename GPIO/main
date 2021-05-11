@@ -1,0 +1,43 @@
+#include "MPC5602P.h"
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR [8].B.PA 	= 0;  // Set as GPIO
+	SIU.PCR [8].B.OBE 	= 1;  // Set as OutPut 
+	SIU.GPDO[8].B.PDO  = 1; 	// DeLighting as default	
+}
+
+
+int main(void)
+{
+	initGPIO();
+	while(1)
+	{
+		int16_t i=0;
+		for(i=0;i<10000;i++)
+		{
+			SIU.GPDO[8].B.PDO  = 1; 	// DeLighting as default
+		}
+		i=0;
+		for(i=0;i<10000;i++)
+		{
+			SIU.GPDO[8].B.PDO  = 0; 	// DeLighting as default
+		}
+	}
+}
+
+
+
