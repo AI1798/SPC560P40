@@ -1,0 +1,234 @@
+#include "MPC5602P.h"
+
+/*******************************************************************************
+* Global variables
+*******************************************************************************/
+uint16_t MasterReadData;
+
+
+/*******************************************************************************
+* Function prototypes
+*******************************************************************************/
+void disableWatchdog(void);
+void SysInit(void);
+void SysClkPMLLinit(void);
+
+void SPI_Init(void);
+void TransmitSPIData(void);
+void Interrupts_init(void);
+void ReadRxSPIData(void);
+void initGPIO(void);
+
+/****************************************************************/
+/*Decripition:Close WatchDog timer
+/****************************************************************/
+void disableWatchdog(void) 
+{
+	SWT.SR.R = 0x0000c520;    /* Write keys to clear soft lock bit */
+	SWT.SR.R = 0x0000d928; 
+	SWT.CR.R = 0x8000010A;    /* Clear watchdog enable (WEN) */
+} 
+
+/****************************************************************/
+/*Decripition:SysInit
+/****************************************************************/
+void SysInit(void) 
+{
+	/* SSCM initialization. Setting up the most restrictive handling of
+     invalid accesses to peripherals.*/
+	SSCM.ERROR.R	= 0x0002;
+	 /* RGM errors clearing.*/
+  	RGM.FES.R         = 0xFFFF;
+  	RGM.DES.R         = 0xFFFF;
+}
+
+/****************************************************************/
+/*Decripition:Clock Inint
+/****************************************************************/
+void SysClkPMLLinit(void)
+{
+	CGM.OCEN.B.EN 								= 0; 	// output clk disenable
+	/*PAGE124*/
+	CGM.OSC_CTL.B.OSCBYP						= 1;	//  EXTAL is used as root clock.
+
+  CGM.FMPLL[0].CR.B.IDF					= 2;	// The value of this field sets the PLL input division factor.
+	CGM.FMPLL[0].CR.B.ODF					=	1;	// The value of this field sets the PLL output division factor.
+	CGM.FMPLL[0].CR.B.NDIV				=	64;	// The value of this field sets the PLL loop division factor.
+	CGM.FMPLL[0].CR.B.EN_PLL_SW		= 1;	// This bit is used to enable progressive clock switching.
+	/*PAGE103*/
+  	CGM.FMPLL[0].MR.R			=0;
+  	
+  		/* Run modes initialization.*/
+  	ME.IS.R           = 8;                        /* Resetting I_ICONF status.*/
+  	ME.MER.R = 0x0000001D;          // Enable DRUN, RUN0, SAFE, RESET modes 
+  	/*PAGE152*/
+  	ME.DRUN.B.DFLAON							= 3;	// 0x11 Data flash is in normal mode
+	ME.DRUN.B.CFLAON							= 3;	// 0x11 Code flash is in normal mode
+	ME.DRUN.B.PLL1ON							= 1;	// 0x1 system PLL is switched on
+	ME.DRUN.B.XOSC0ON							= 1;	// 0x1 4 MHz crystal oscillator is switched on
+	ME.DRUN.B.IRCON								= 1;	// 0x1 16 MHz internal RC oscillator is switched on
+	ME.DRUN.B.SYSCLK							= 4;	// 0x0100 system PLL
+	/*PAGE163*/
+  	ME.DRUN.R									= 0x000F0074;
+  	/*PAGE163*/
+  	ME.SAFE.R									= 0x000F0074;
+  	ME.RUN[0].R									= 0x000F0074;
+ 	/*PAGE163*/
+ 	ME.RUNPC[0].R = 0x000000FF; /* enable peripherals run in all modes */
+	/*PAGE166*/
+	ME.LPPC[0].R = 0x00000500;
+	/*PAGE167*/
+	
+	CGM.OCDSSC.B.SELDIV						= 1;	// output selected Output Clock divided by 2
+	CGM.OCDSSC.B.SELCTL						= 2;	// 0x0010 system PLL
+	/*PAGE126*/
+	
+	CFLASH.PFCR0.B.BK0_APC  = 2;
+  	CFLASH.PFCR0.B.BK0_RWSC = 2;
+  	
+	CGM.CMU_0_CSR.B.CME_A					= 0;	// FMPLL_0 clock monitor disenable
+	CGM.CMU_0_CSR.B.RCDIV					= 0;	// RC clock division by 1(no division)
+	/*PAGE112*/
+
+	/*PAGE150*/
+	CGM.OCEN.B.EN 								= 1; 	// output clk enable
+	/*PAGE124*/
+	while (ME.GS.B.S_MTRANS) {} ;			//Wait for mode transition to complete
+
+}
+
+/****************************************************************/
+/*Decripition:SPI Inint
+/****************************************************************/
+void SPI_Init(void)
+{
+	/*PAGE442 SPI register*/
+	DSPI_2.MCR.B.MSTR				  = 1;	// DSPI is in master mode
+	DSPI_2.MCR.B.PCSIS0				= 1;	// The inactive state of CS0_x is high
+	DSPI_2.MCR.B.PCSIS1				= 1;	// The inactive state of CS0_x is high
+	DSPI_2.MCR.B.SMPL_PT      = 0;  // Sample point
+	DSPI_2.MCR.B.HALT				  = 1;	// Stop transfers
+	/*PAGE445*/
+	
+	DSPI_2.CTAR[0].B.FMSZ			  = 15;	// the number of bits transferred per frame
+	DSPI_2.CTAR[0].B.CPOL       = 0;  // The inactive state value of SCK is low
+  DSPI_2.CTAR[0].B.CPHA       = 1;  // Data is changed on the leading edge of SCK and captured on the following edge
+	DSPI_2.CTAR[0].B.LSBFE			= 1;	// Data is transferred MSB first
+	DSPI_2.CTAR[0].B.PCSSCK     = 0;  // minnize CS_x to SCK_x delay, PAGE467
+	DSPI_2.CTAR[0].B.PASC       = 0;  // minnize after SCK delay, PAGE467
+  DSPI_2.CTAR[0].B.PDT        = 0;  // minnize delay after transfer, PAGE468
+	DSPI_2.CTAR[0].B.PBR        = 2;  // Baud rate prescaler value=5,Baud Rate = sys_clk(MHz)/(PBR*BR)
+	DSPI_2.CTAR[0].B.CSSCK			= 0;  // minnize CS_x to SCK_x delay, PAGE467
+	DSPI_2.CTAR[0].B.ASC        = 0;  // minnize after SCK delay, PAGE467
+	DSPI_2.CTAR[0].B.DT         = 0;  // minnize delay after transfer, PAGE468
+	DSPI_2.CTAR[0].B.BR         = 7;  // Baud rate scaler value=128. Baud Rate =64000000/5/128=100k
+	/*PAGE448*/      /*PAGE470:Classic SPI transfer format*/
+	DSPI_2.MCR.B.HALT				    = 0;	// Start transfers
+	/*PAGE445*/
+	
+	DSPI_2.SR.R                 = 0xFFFFFFFF;
+	/*PAGE453*/
+	DSPI_2.MCR.B.HALT				= 0;	// Start transfers
+}
+
+	
+/***************************************************************/
+/*Decripition:Interrupts function & INTC priority definition
+/****************************************************************/
+void Interrupts_init(void) 
+{
+
+	/* Initialize interrupts and exceptions */
+	INTC_InstallINTCInterruptHandler(ReadRxSPIData, 78, 3); 
+	/*PAGE223*/
+	/* lower current INTC priority to start INTC interrupts */
+	INTC.CPR.R = 0;
+	/*PAGE213*/
+}
+
+/***************************************************************/
+/*Decripition:read SPI rx data
+/****************************************************************/
+void ReadRxSPIData(void) 
+{
+	while (DSPI_2.SR.B.RFDF != 1){}				// Wait for Receive FIFO Drain Flag = 1 
+	MasterReadData = DSPI_2.POPR.R;				// Read data received by master SPI 
+	DSPI_2.SR.R = 0xFA0A0000;					    // Clear ALL status flags by writing 1 
+}
+
+/***************************************************************/
+/*Decripition:transmit SPI data
+/****************************************************************/
+void TransmitSPIData(void) 
+{
+	DSPI_2.PUSHR.B.EOQ				= 0;	// The SPI data is not the last data to transfer
+	DSPI_2.PUSHR.B.PCS0				= 1;	// Assert the CS0 signal
+	DSPI_2.PUSHR.B.CTCNT      = 1;
+	DSPI_2.PUSHR.B.TXDATA			= 0xAAAA;	// TXDATA
+	/*PAGE458*/
+	while(DSPI_2.SR.B.TCF==0)
+	{
+	  
+	}
+	DSPI_2.SR.B.TCF=1;
+}
+
+/***************************************************************/
+/*Decripition:init MCU GPIO
+/****************************************************************/
+void initGPIO(void)
+{
+	SIU.PCR[8].B.PA              = 0; 
+	SIU.PCR[8].B.OBE             = 1;
+	SIU.GPDO[8].B.PDO					   = 0; 	
+	
+	SIU.PCR[10].B.PA              = 1; //DSPI2_CS0
+	SIU.PCR[10].B.OBE             = 1;
+	SIU.GPDO[10].B.PDO					  = 0; 	// 默认低电平
+	
+	SIU.PCR[11].B.PA              = 1; //DSPI2_SCK
+	SIU.PCR[11].B.OBE             = 1;
+	SIU.GPDO[11].B.PDO					  = 0; 	// 默认低电平
+
+	SIU.PCR[12].B.PA              = 1; //DSPI2_SOUT
+	SIU.PCR[12].B.OBE             = 1;
+	SIU.GPDO[12].B.PDO					  = 0; 	// 默认低电平
+	
+	SIU.PCR[13].B.PA              = 2; //DSPI2_SIN
+	SIU.PCR[13].B.IBE             = 1;
+	SIU.GPDI[13].B.PDI					  = 0; 	// 默认低电平
+	
+}
+
+/***************************************************************/
+/*Decripition: MAIN
+/****************************************************************/
+int main(void)
+{
+  disableWatchdog();
+	SysInit();
+	SysClkPMLLinit();
+	Interrupts_init();
+	SPI_Init();
+	initGPIO();
+	while(1)
+	{
+		uint16_t  i,j=0;
+		for(i=0;i<50000;i++)
+		{
+      
+		}
+		if(DSPI_2.SR.B.TXRXS==1)
+		{
+		  
+		  SIU.GPDO[8].B.PDO					   ^= 1;
+		}
+		
+		TransmitSPIData();						// 按照时间间隔发送
+		
+		
+	}
+}
+
+
+
